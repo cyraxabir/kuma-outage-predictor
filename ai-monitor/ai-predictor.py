@@ -11,7 +11,7 @@ Real-time (every 30 min):
                             alert BEFORE the outage happens.
 
 Scheduled:
-  4. Daily digest  (08:00)        — Bangla summary of last 24h
+  4. Daily digest  (08:00)        — English summary of last 24h
   5. Weekly report (Mon 09:00)    — week-over-week comparison, duration
                                     trend per monitor, monitor-to-monitor
                                     correlation, lead-time reliability table
@@ -148,7 +148,7 @@ def count_flaps(statuses):
 
 
 def trend_label(vals):
-    """Simple early/late half comparison. Returns বৃদ্ধি/স্থির/হ্রাস or None."""
+    """Simple early/late half comparison. Returns rising/stable/falling or None."""
     if len(vals) < 4:
         return None
     half  = len(vals) // 2
@@ -156,8 +156,8 @@ def trend_label(vals):
     late  = sum(vals[half:]) / (len(vals) - half)
     diff  = late - early
     if abs(diff) < 30:
-        return "স্থির"
-    return "বৃদ্ধি" if diff > 0 else "হ্রাস"
+        return "stable"
+    return "rising" if diff > 0 else "falling"
 
 
 def rt_trend(rt_raw):
@@ -325,7 +325,7 @@ def duration_trend(name, events_store):
     recent_avg = sum(e["duration_m"] for e in recent) / len(recent)
     diff = recent_avg - older_avg
 
-    trend = "স্থির" if abs(diff) < 1 else ("বাড়ছে" if diff > 0 else "কমছে")
+    trend = "stable" if abs(diff) < 1 else ("increasing" if diff > 0 else "decreasing")
 
     return {"trend": trend, "recent_avg": round(recent_avg, 1),
             "older_avg": round(older_avg, 1), "n": len(sorted_ev)}
@@ -372,7 +372,7 @@ def lead_time_reliability(name, events_store, min_events=LEAD_TIME_MIN_EVENTS):
     events = [e for e in events_store.get(name, []) if e.get("pre_rt_trend")]
     if len(events) < min_events:
         return None
-    increasing = sum(1 for e in events if e["pre_rt_trend"] == "বৃদ্ধি")
+    increasing = sum(1 for e in events if e["pre_rt_trend"] == "rising")
     pct = round(increasing / len(events) * 100, 1)
     return {"pct": pct, "n": len(events), "reliable": pct >= LEAD_TIME_HIGH_PCT}
 
@@ -397,56 +397,56 @@ def ollama(prompt, temperature=0.2):
 def ai_analyze_flap(name, flap_count, down_events, rt_trend_str, pattern, dur_trend):
     if down_events:
         events_block = "\n".join(
-            f"  • {e['start']} → {e['end']} ({e['duration_m']} মিনিট ডাউন)"
-            + (f", আগের RT: {e['pre_rt_ms']}ms" if e['pre_rt_ms'] else "")
+            f"  • {e['start']} → {e['end']} ({e['duration_m']} min down)"
+            + (f", pre-RT: {e['pre_rt_ms']}ms" if e['pre_rt_ms'] else "")
             for e in down_events
         )
     else:
-        events_block = "  কোনো সম্পূর্ণ ডাউন ইভেন্ট শনাক্ত হয়নি"
+        events_block = "  No completed down event detected"
 
     if pattern and pattern["status"] == "active":
         pattern_block = (
-            f"মোট ইভেন্ট: {pattern['total_events']} টি, {pattern['data_days']} দিনে\n"
-            f"সর্বোচ্চ ব্যর্থতার সময়: {pattern['peak_hour']}:00 ({pattern['peak_hour_pct']}%)\n"
-            f"গড় বিরতি: {pattern['avg_interval_h']} ঘণ্টা (নিয়মিততা: {pattern['consistency_pct']}%)"
+            f"Total events: {pattern['total_events']} over {pattern['data_days']} days\n"
+            f"Peak failure hour: {pattern['peak_hour']}:00 ({pattern['peak_hour_pct']}%)\n"
+            f"Average interval: {pattern['avg_interval_h']} hours (consistency: {pattern['consistency_pct']}%)"
         )
     elif pattern and pattern["status"] == "accumulating":
-        pattern_block = f"ইতিহাস সংগ্রহ হচ্ছে — {pattern['days']}/{pattern['needed']} দিন"
+        pattern_block = f"History accumulating — {pattern['days']}/{pattern['needed']} days"
     else:
-        pattern_block = "পর্যাপ্ত ইতিহাস নেই"
+        pattern_block = "Insufficient history"
 
     if dur_trend:
         dur_block = (
-            f"ডাউনটাইমের দৈর্ঘ্য {dur_trend['trend']} — আগে গড়ে {dur_trend['older_avg']} মিনিট, "
-            f"এখন গড়ে {dur_trend['recent_avg']} মিনিট (n={dur_trend['n']})"
+            f"Downtime duration is {dur_trend['trend']} — was averaging {dur_trend['older_avg']} min, "
+            f"now averaging {dur_trend['recent_avg']} min (n={dur_trend['n']})"
         )
     else:
-        dur_block = "পর্যাপ্ত ইতিহাস নেই duration trend-এর জন্য"
+        dur_block = "Insufficient history for duration trend"
 
-    prompt = f"""তুমি একজন senior SRE যে নিচের monitoring data বিশ্লেষণ করছ।
+    prompt = f"""You are a senior SRE analyzing the following monitoring data.
 
-মনিটর: {name}
-৬ ঘণ্টায় status পরিবর্তন: {flap_count} বার
+Monitor: {name}
+Status changes in 6h: {flap_count} times
 Response time trend: {rt_trend_str}
-ডাউনটাইম দৈর্ঘ্যের প্রবণতা: {dur_block}
+Downtime duration trend: {dur_block}
 
-প্রতিটি ডাউন ইভেন্টের বিস্তারিত:
+Details of each down event:
 {events_block}
 
-ঐতিহাসিক প্যাটার্ন:
+Historical pattern:
 {pattern_block}
 
-নিচের ৪টি প্রশ্নের উত্তর দাও, শুধুমাত্র দেওয়া data-র উপর ভিত্তি করে:
+Answer the following 4 questions, based strictly on the data given:
 
 SEVERITY: (LOW / MEDIUM / HIGH / CRITICAL)
-TYPE: (নিয়মিত_বিরতি / এলোমেলো / একক_দীর্ঘ_আউটেজ / recovery_cycle)
-NORMAL: (হ্যাঁ / না)
-ANALYSIS: (২ বাক্য বাংলায় — ডাউনটাইমের ধরন, দৈর্ঘ্যের প্রবণতা এবং এটি কী ইঙ্গিত করছে)
+TYPE: (regular_interval / random / single_long_outage / recovery_cycle)
+NORMAL: (Yes / No)
+ANALYSIS: (2 sentences in English — the nature of the downtime, the duration trend, and what it indicates)
 
-শুধু উপরের ৪টি লাইন লেখো, কোনো ভূমিকা নয়।"""
+Write only the 4 lines above, no preamble."""
 
     response = ollama(prompt)
-    result = {"severity": "MEDIUM", "type": "এলোমেলো", "normal": "না", "analysis": response}
+    result = {"severity": "MEDIUM", "type": "random", "normal": "No", "analysis": response}
     for line in response.splitlines():
         if line.startswith("SEVERITY:"):  result["severity"] = line.split(":", 1)[1].strip()
         elif line.startswith("TYPE:"):    result["type"]     = line.split(":", 1)[1].strip()
@@ -458,25 +458,25 @@ ANALYSIS: (২ বাক্য বাংলায় — ডাউনটাই�
 # ─── AI DECISION: PATTERN VALIDATION ─────────────────────────────────────────
 
 def ai_validate_pattern(name, pattern):
-    prompt = f"""তুমি একজন data analyst। নিচের statistical pattern দেখে সিদ্ধান্ত নাও এটি প্রকৃত recurring pattern কিনা।
+    prompt = f"""You are a data analyst. Based on the statistical pattern below, decide whether this is a genuine recurring pattern.
 
-মনিটর: {name}
-মোট ইভেন্ট: {pattern['total_events']} টি, {pattern['data_days']} দিনে
-গড় বিরতি: {pattern['avg_interval_h']} ঘণ্টা
-নিয়মিততা: {pattern['consistency_pct']}%
+Monitor: {name}
+Total events: {pattern['total_events']} over {pattern['data_days']} days
+Average interval: {pattern['avg_interval_h']} hours
+Consistency: {pattern['consistency_pct']}%
 Peak hour: {pattern['peak_hour']}:00 ({pattern['peak_hour_pct']}%)
-সাম্প্রতিক ৫টি: {', '.join(pattern['recent_events'])}
+Last 5 events: {', '.join(pattern['recent_events'])}
 
-GENUINE: (হ্যাঁ / না)
+GENUINE: (Yes / No)
 CONFIDENCE: (LOW / MEDIUM / HIGH)
-COMMENT: (১ বাক্য বাংলায়)
+COMMENT: (1 sentence in English)
 
-শুধু উপরের ৩টি লাইন।"""
+Write only the 3 lines above."""
 
     response = ollama(prompt)
     result = {"genuine": True, "confidence": "LOW", "comment": response}
     for line in response.splitlines():
-        if line.startswith("GENUINE:"):    result["genuine"] = line.split(":", 1)[1].strip() == "হ্যাঁ"
+        if line.startswith("GENUINE:"):    result["genuine"] = line.split(":", 1)[1].strip().lower().startswith("y")
         elif line.startswith("CONFIDENCE:"): result["confidence"] = line.split(":", 1)[1].strip()
         elif line.startswith("COMMENT:"):  result["comment"] = line.split(":", 1)[1].strip()
     return result
@@ -489,32 +489,32 @@ def ai_daily_digest(stats, overlaps, rt_trends):
     healthy_count = len(stats) - len(problem_monitors)
 
     monitor_block = "\n".join(
-        f"- {n}: {s['down_events']} বার ডাউন, {s['flaps']} বার ফ্ল্যাপ, "
-        f"গড় RT {s['avg_rt']:.0f}ms, RT trend: {rt_trends.get(n, 'N/A')}"
+        f"- {n}: {s['down_events']} down events, {s['flaps']} flaps, "
+        f"avg RT {s['avg_rt']:.0f}ms, RT trend: {rt_trends.get(n, 'N/A')}"
         for n, s in sorted(problem_monitors.items(), key=lambda x: -x[1]["down_events"])
-    ) if problem_monitors else "কোনো সমস্যা নেই"
+    ) if problem_monitors else "No issues"
 
     if overlaps:
         ov_lines = "\n".join(
-            f"- {o['time']}: {o['count']} টি মনিটর একসাথে ডাউন — {', '.join(o['monitors'])}"
+            f"- {o['time']}: {o['count']} monitors down together — {', '.join(o['monitors'])}"
             for o in overlaps[:10]
         )
-        overlap_instruction = f"{ov_lines}\nএগুলো প্রকৃত একযোগ আউটেজ।"
+        overlap_instruction = f"{ov_lines}\nThese are confirmed simultaneous outages."
     else:
-        overlap_instruction = "কোনো একযোগ আউটেজ পাওয়া যায়নি। shared infrastructure কারণ দাবি করো না।"
+        overlap_instruction = "No simultaneous outages found. Do not claim a shared infrastructure cause."
 
-    prompt = f"""তুমি একজন monitoring analyst। নিচের ২৪ ঘণ্টার data দেখে বাংলায় সংক্ষিপ্ত daily digest লেখো।
+    prompt = f"""You are a monitoring analyst. Write a brief daily digest in English based on the last 24 hours of data below.
 
-তারিখ: {datetime.now().strftime('%Y-%m-%d')}
-মোট মনিটর: {len(stats)} টি, সুস্থ: {healthy_count} টি
+Date: {datetime.now().strftime('%Y-%m-%d')}
+Total monitors: {len(stats)}, healthy: {healthy_count}
 
-সমস্যাযুক্ত মনিটর:
+Monitors with issues:
 {monitor_block}
 
-একযোগ আউটেজ:
+Simultaneous outages:
 {overlap_instruction}
 
-নিয়ম: শুধু data থেকে সিদ্ধান্ত নাও, অনুমান নয়। ৩-৫ বাক্যে, plain paragraph, সম্পূর্ণ বাংলায়।"""
+Rule: base your conclusions strictly on the data, no speculation. 3-5 sentences, plain paragraph, in English."""
 
     return ollama(prompt, temperature=0.3)
 
@@ -522,25 +522,25 @@ def ai_daily_digest(stats, overlaps, rt_trends):
 # ─── AI: WEEKLY REPORT ────────────────────────────────────────────────────────
 
 def ai_weekly_report(comp_block, dur_block, corr_block, lead_block):
-    prompt = f"""তুমি একজন monitoring analyst। নিচের সাপ্তাহিক তুলনামূলক তথ্য দেখে বাংলায় weekly report লেখো।
+    prompt = f"""You are a monitoring analyst. Write a weekly report in English based on the comparative data below.
 
-সপ্তাহ তুলনা (এই সপ্তাহ vs গত সপ্তাহ):
+Week comparison (this week vs last week):
 {comp_block}
 
-ডাউনটাইম duration trend:
+Downtime duration trend:
 {dur_block}
 
-Monitor correlation (একসাথে ডাউন হওয়ার প্রবণতা):
+Monitor correlation (tendency to go down together):
 {corr_block}
 
-Lead-time indicator (RT বৃদ্ধি কি outage পূর্বাভাস দেয়):
+Lead-time indicator (does RT rise predict an outage):
 {lead_block}
 
-নিয়ম:
-- শুধু দেওয়া data থেকে সিদ্ধান্ত নাও
-- কোনো section-এ তথ্য না থাকলে সেটা নিয়ে জোর করে মন্তব্য করো না
-- সবচেয়ে গুরুত্বপূর্ণ finding আগে বলো
-- ৪-৬ বাক্যে, plain paragraph, সম্পূর্ণ বাংলায়"""
+Rules:
+- Base your conclusions strictly on the data given
+- If a section has no data, do not force a comment about it
+- State the most important finding first
+- 4-6 sentences, plain paragraph, in English"""
 
     return ollama(prompt, temperature=0.3)
 
@@ -567,35 +567,35 @@ def flap_embed(name, flap_count, down_events, pattern, current_status, ai, dur_t
     events_str = "\n".join(
         f"{e['start']}→{e['end']} ({e['duration_m']}m)" + (f" pre-RT:{e['pre_rt_ms']}ms" if e['pre_rt_ms'] else "")
         for e in down_events[-6:]
-    ) if down_events else "কোনো সম্পূর্ণ ডাউন ইভেন্ট নেই"
+    ) if down_events else "No completed down event"
 
     if pattern and pattern["status"] == "active":
         pat_str = (f"Peak: {pattern['peak_hour']}:00 ({pattern['peak_hour_pct']}%)\n"
-                   f"Interval: ~{pattern['avg_interval_h']}h (নিয়মিততা {pattern['consistency_pct']}%)\n"
+                   f"Interval: ~{pattern['avg_interval_h']}h (consistency {pattern['consistency_pct']}%)\n"
                    f"Next: {pattern['hours_until_next']:+.1f}h")
     elif pattern and pattern["status"] == "accumulating":
-        pat_str = f"সংগ্রহ হচ্ছে — {pattern['days']}/{pattern['needed']} দিন"
+        pat_str = f"Accumulating — {pattern['days']}/{pattern['needed']} days"
     else:
-        pat_str = "পর্যাপ্ত ইতিহাস নেই"
+        pat_str = "Insufficient history"
 
-    dur_str = (f"{dur_trend['trend']} — আগে {dur_trend['older_avg']}m, এখন {dur_trend['recent_avg']}m"
-              if dur_trend else "পর্যাপ্ত ইতিহাস নেই")
+    dur_str = (f"{dur_trend['trend']} — was {dur_trend['older_avg']}m, now {dur_trend['recent_avg']}m"
+              if dur_trend else "Insufficient history")
 
-    normal_tag = "✅ স্বাভাবিক recovery" if ai.get("normal") == "হ্যাঁ" else "⚠️ প্রকৃত অস্থিরতা"
+    normal_tag = "✅ Normal recovery" if ai.get("normal", "").lower().startswith("y") else "⚠️ Genuine instability"
 
     return {
         "title": f"{emoji} Flapping — {name}  [{ai.get('severity','?')}]",
         "color": color,
         "timestamp": datetime.utcnow().isoformat(),
         "fields": [
-            {"name": "Status",       "value": status_txt,  "inline": True},
-            {"name": "Flaps / 6h",   "value": str(flap_count), "inline": True},
-            {"name": "AI রায়",       "value": normal_tag,   "inline": True},
-            {"name": "ধরন",          "value": ai.get("type", "—"), "inline": True},
-            {"name": "Duration trend", "value": dur_str,    "inline": True},
-            {"name": "ডাউন ইভেন্ট", "value": f"```{events_str}```", "inline": False},
-            {"name": "প্যাটার্ন",    "value": f"```{pat_str}```",    "inline": False},
-            {"name": "🤖 AI বিশ্লেষণ", "value": ai.get("analysis", "—")[:1000], "inline": False},
+            {"name": "Status",         "value": status_txt,      "inline": True},
+            {"name": "Flaps / 6h",     "value": str(flap_count), "inline": True},
+            {"name": "AI verdict",     "value": normal_tag,      "inline": True},
+            {"name": "Type",           "value": ai.get("type", "—"), "inline": True},
+            {"name": "Duration trend", "value": dur_str,         "inline": True},
+            {"name": "Down events",    "value": f"```{events_str}```", "inline": False},
+            {"name": "Pattern",        "value": f"```{pat_str}```",    "inline": False},
+            {"name": "🤖 AI Analysis", "value": ai.get("analysis", "—")[:1000], "inline": False},
         ],
         "footer": {"text": f"Uptime Kuma • {datetime.now().strftime('%Y-%m-%d %H:%M')}"}
     }
@@ -604,21 +604,21 @@ def flap_embed(name, flap_count, down_events, pattern, current_status, ai, dur_t
 def pattern_embed(name, pattern, ai_validation):
     confidence_emoji = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(ai_validation.get("confidence", "LOW"), "⚪")
     pat_str = (
-        f"মোট ইভেন্ট: {pattern['total_events']} টি, {pattern['data_days']} দিনে\n"
+        f"Total events: {pattern['total_events']} over {pattern['data_days']} days\n"
         f"Peak hour: {pattern['peak_hour']}:00 ({pattern['peak_hour_pct']}%)\n"
-        f"বিরতি: প্রতি ~{pattern['avg_interval_h']}h (নিয়মিততা {pattern['consistency_pct']}%)\n"
-        f"পরবর্তী উইন্ডো: {pattern['hours_until_next']:+.1f}h"
+        f"Interval: every ~{pattern['avg_interval_h']}h (consistency {pattern['consistency_pct']}%)\n"
+        f"Next window: {pattern['hours_until_next']:+.1f}h"
     )
-    genuine_tag = "✅ প্রকৃত pattern" if ai_validation.get("genuine") else "⚠️ সম্ভবত noise"
+    genuine_tag = "✅ Genuine pattern" if ai_validation.get("genuine") else "⚠️ Likely noise"
     return {
         "title": f"🔮 Pattern Alert — {name}",
         "color": 0x9B59B6,
         "timestamp": datetime.utcnow().isoformat(),
         "fields": [
-            {"name": "AI যাচাই",  "value": f"{confidence_emoji} {genuine_tag}", "inline": True},
+            {"name": "AI check",   "value": f"{confidence_emoji} {genuine_tag}", "inline": True},
             {"name": "Confidence", "value": ai_validation.get("confidence", "—"), "inline": True},
             {"name": "Pattern data", "value": f"```{pat_str}```", "inline": False},
-            {"name": "🤖 AI মূল্যায়ন", "value": ai_validation.get("comment", "—"), "inline": False},
+            {"name": "🤖 AI Assessment", "value": ai_validation.get("comment", "—"), "inline": False},
         ],
         "footer": {"text": f"Uptime Kuma • {datetime.now().strftime('%Y-%m-%d %H:%M')}"}
     }
@@ -630,13 +630,14 @@ def early_warning_embed(name, lead_time, rt_diff, trend_str):
         "color": 0xF1C40F,
         "timestamp": datetime.utcnow().isoformat(),
         "fields": [
-            {"name": "কারণ", "value": f"Response time গত ৩০ মিনিটে +{rt_diff}ms বেড়েছে", "inline": False},
-            {"name": "Lead-time নির্ভরযোগ্যতা",
-             "value": f"অতীতে {lead_time['pct']}% ক্ষেত্রে এই ধরনের বৃদ্ধির পর outage হয়েছে (n={lead_time['n']} ঘটনা থেকে যাচাইকৃত)",
+            {"name": "Reason", "value": f"Response time has risen +{rt_diff}ms in the last 30 minutes", "inline": False},
+            {"name": "Lead-time reliability",
+             "value": f"In the past, {lead_time['pct']}% of outages were preceded by this kind of rise "
+                      f"(verified from {lead_time['n']} historical events)",
              "inline": False},
-            {"name": "বর্তমান RT ট্রেন্ড", "value": trend_str, "inline": False},
+            {"name": "Current RT trend", "value": trend_str, "inline": False},
         ],
-        "footer": {"text": "Predictive early warning — শুধু প্রমাণিত historical correlation থেকে"}
+        "footer": {"text": "Predictive early warning — based only on proven historical correlation"}
     }
 
 
@@ -646,28 +647,28 @@ def digest_embed(ai_summary, stats, overlaps):
         for name, s in sorted(stats.items(), key=lambda x: -x[1]["down_events"])
         if s["down_events"] > 0 or s["flaps"] > 0
     ]
-    raw_stats = "\n".join(monitor_lines) if monitor_lines else "সব মনিটর সুস্থ"
-    fields = [{"name": "গত ২৪ ঘণ্টা", "value": f"```{raw_stats[:900]}```", "inline": False}]
+    raw_stats = "\n".join(monitor_lines) if monitor_lines else "All monitors healthy"
+    fields = [{"name": "Last 24 hours", "value": f"```{raw_stats[:900]}```", "inline": False}]
     if overlaps:
-        ov_lines = "\n".join(f"{o['time']} — {o['count']} মনিটর: {', '.join(o['monitors'])}" for o in overlaps[:8])
-        fields.append({"name": "🔗 নিশ্চিত একযোগ আউটেজ", "value": f"```{ov_lines[:900]}```", "inline": False})
-    fields.append({"name": "🤖 AI সারসংক্ষেপ", "value": ai_summary[:1000], "inline": False})
-    return {"title": "📊 দৈনিক মনিটর ডাইজেস্ট", "color": 0x3498DB,
+        ov_lines = "\n".join(f"{o['time']} — {o['count']} monitors: {', '.join(o['monitors'])}" for o in overlaps[:8])
+        fields.append({"name": "🔗 Confirmed simultaneous outages", "value": f"```{ov_lines[:900]}```", "inline": False})
+    fields.append({"name": "🤖 AI Summary", "value": ai_summary[:1000], "inline": False})
+    return {"title": "📊 Daily Monitor Digest", "color": 0x3498DB,
             "timestamp": datetime.utcnow().isoformat(), "fields": fields,
             "footer": {"text": f"Uptime Kuma • {datetime.now().strftime('%Y-%m-%d %H:%M')}"}}
 
 
 def weekly_embed(comp_block, dur_block, corr_block, lead_block, ai_summary):
     return {
-        "title": "📅 সাপ্তাহিক মনিটরিং রিপোর্ট",
+        "title": "📅 Weekly Monitoring Report",
         "color": 0x1ABC9C,
         "timestamp": datetime.utcnow().isoformat(),
         "fields": [
-            {"name": "সপ্তাহ তুলনা (এই সপ্তাহ vs গত সপ্তাহ)", "value": f"```{comp_block[:900]}```", "inline": False},
-            {"name": "ডাউনটাইম দৈর্ঘ্যের প্রবণতা", "value": f"```{dur_block[:900]}```", "inline": False},
+            {"name": "Week comparison (this week vs last week)", "value": f"```{comp_block[:900]}```", "inline": False},
+            {"name": "Downtime duration trend", "value": f"```{dur_block[:900]}```", "inline": False},
             {"name": "Monitor Correlation", "value": f"```{corr_block[:900]}```", "inline": False},
             {"name": "Lead-time Indicator", "value": f"```{lead_block[:900]}```", "inline": False},
-            {"name": "🤖 AI সারসংক্ষেপ", "value": ai_summary[:1000], "inline": False},
+            {"name": "🤖 AI Summary", "value": ai_summary[:1000], "inline": False},
         ],
         "footer": {"text": f"Uptime Kuma Weekly • {datetime.now().strftime('%Y-%m-%d')}"}
     }
@@ -700,7 +701,7 @@ def run_daily_digest():
     try:
         ai_summary = ai_daily_digest(stats, overlaps, rt_trends)
     except Exception as e:
-        ai_summary = f"AI অনুপলব্ধ: {e}"
+        ai_summary = f"AI unavailable: {e}"
 
     try:
         send_discord([digest_embed(ai_summary, stats, overlaps)])
@@ -737,30 +738,31 @@ def run_weekly_report(events_store):
                        if v and v["reliable"]}
 
     comp_block = "\n".join(
-        f"- {n}: এই সপ্তাহে {c['this_down']} down/{c['this_flap']} flap, "
-        f"গত সপ্তাহে {c['last_down']} down/{c['last_flap']} flap"
+        f"- {n}: this week {c['this_down']} down/{c['this_flap']} flap, "
+        f"last week {c['last_down']} down/{c['last_flap']} flap"
         for n, c in sorted(comparison.items(), key=lambda x: -x[1]['this_down'])
-    ) if comparison else "উল্লেখযোগ্য কোনো পরিবর্তন নেই"
+    ) if comparison else "No significant changes"
 
     dur_block = "\n".join(
-        f"- {n}: {d['trend']} — আগে {d['older_avg']}m, এখন {d['recent_avg']}m (n={d['n']})"
+        f"- {n}: {d['trend']} — was {d['older_avg']}m, now {d['recent_avg']}m (n={d['n']})"
         for n, d in duration_trends.items()
-    ) if duration_trends else "পর্যাপ্ত ইতিহাস নেই"
+    ) if duration_trends else "Insufficient history"
 
     corr_block = "\n".join(
-        f"- {c['a']} ডাউন হলে {c['pct']}% ক্ষেত্রে {c['b']}ও {CORRELATION_WINDOW_MIN} মিনিটের মধ্যে ডাউন হয় (n={c['n']})"
+        f"- when {c['a']} goes down, {c['b']} also goes down within {CORRELATION_WINDOW_MIN} min "
+        f"{c['pct']}% of the time (n={c['n']})"
         for c in correlations
-    ) if correlations else "কোনো শক্তিশালী correlation পাওয়া যায়নি"
+    ) if correlations else "No strong correlation found"
 
     lead_block = "\n".join(
-        f"- {n}: {v['pct']}% ক্ষেত্রে outage-এর আগে RT বৃদ্ধি পেয়েছে (n={v['n']}) — নির্ভরযোগ্য early-warning signal"
+        f"- {n}: RT rose before the outage {v['pct']}% of the time (n={v['n']}) — reliable early-warning signal"
         for n, v in lead_times.items()
-    ) if lead_times else "কোনো নির্ভরযোগ্য leading indicator পাওয়া যায়নি"
+    ) if lead_times else "No reliable leading indicator found"
 
     try:
         ai_summary = ai_weekly_report(comp_block, dur_block, corr_block, lead_block)
     except Exception as e:
-        ai_summary = f"AI অনুপলব্ধ: {e}"
+        ai_summary = f"AI unavailable: {e}"
 
     try:
         send_discord([weekly_embed(comp_block, dur_block, corr_block, lead_block, ai_summary)])
@@ -834,9 +836,9 @@ def main():
                 try:
                     ai = ai_analyze_flap(name, flaps, down_events, rt_trend_str, pattern, dur_trend)
                 except Exception as e:
-                    ai = {"severity": "MEDIUM", "type": "অজানা", "normal": "না", "analysis": f"AI অনুপলব্ধ: {e}"}
+                    ai = {"severity": "MEDIUM", "type": "unknown", "normal": "No", "analysis": f"AI unavailable: {e}"}
 
-                if ai.get("normal") == "হ্যাঁ" and "LOW" in ai.get("severity", ""):
+                if ai.get("normal", "").lower().startswith("y") and "LOW" in ai.get("severity", ""):
                     print(f"[{datetime.now()}] Skipped {name} — AI: normal recovery, LOW severity")
                 else:
                     embeds_to_send.append(
@@ -853,7 +855,7 @@ def main():
                 try:
                     ai_val = ai_validate_pattern(name, pattern)
                 except Exception as e:
-                    ai_val = {"genuine": True, "confidence": "LOW", "comment": f"AI অনুপলব্ধ: {e}"}
+                    ai_val = {"genuine": True, "confidence": "LOW", "comment": f"AI unavailable: {e}"}
 
                 if ai_val.get("genuine"):
                     embeds_to_send.append(pattern_embed(name, pattern, ai_val))
