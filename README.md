@@ -8,6 +8,8 @@ Main script: [`ai-predictor.py`](https://github.com/cyraxabir/outage-forecast/bl
 
 ![architecture](docs/architecture.svg)
 
+
+
 ---
 
 ## What it actually does
