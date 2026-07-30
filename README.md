@@ -6,8 +6,7 @@ Uptime Kuma's dashboard only shows ~1 week of history and alerts you *after* som
 
 Main script: [`ai-predictor.py`](https://github.com/cyraxabir/outage-forecast/blob/main/ai-monitor/ai-predictor.py)
 
-(upt-ss.png)
-(ss3.png)
+![architecture](./upt-ss.png)
 
 
 
