@@ -1,4 +1,4 @@
-# outage-forecast
+# Outage Forecast & Predict
 
 **AI-assisted predictive monitoring for Uptime Kuma — self-hosted, no SaaS, no cloud dependency.**
 
