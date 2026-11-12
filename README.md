@@ -80,13 +80,25 @@ Prometheus (Uptime Kuma Metrics)
                            ▼
                 Discord Webhook Embeds
 
+```
+---
+### How It Predicts Outages
+
+* Time-Window Forecasts: Learns recurring daily, workday (Sun–Thu), and interval patterns from past episodes, back-tests them against random chance, and alerts up to 2 hours before the window opens.
+
+* Latency & Jitter Early Warnings: Alerts while a monitor is still UP if response time spikes (+45% or +100ms) or gets erratic (CV >= 0.55), provided past drops on that site were historically preceded by slowdowns.
+
+* Hybrid Watch Promotion: Combines moderate-probability time windows (30%–49%) with live response-time spikes to catch borderline outages right as traffic stress begins building.
+
+* Live Cascading Alerts: Predicts an imminent drop on a healthy downstream monitor (Follower) the moment an upstream monitor (Leader) goes down, using historical lag correlation.
+
+
+
 - **Uptime Kuma** — service monitoring, exposes `/metrics`
 - **Prometheus** — long-term metrics storage
 - **Grafana** — SLA / latency dashboards
 - **Ollama** — self-hosted LLM, no data leaves the network
 - **Discord** — alert delivery, in Bangla
-
----
 
 ## Setup
 
