@@ -12,33 +12,73 @@ Main script: [`ai-predictor.py`](https://github.com/cyraxabir/outage-forecast/bl
 
 ---
 
-## What it actually does
 
-Every signal below is **computed first, then explained by AI** — the model never invents a correlation or trend it wasn't given.
+## ✨ Key Features
 
-| Signal | Trigger | What makes it real |
-|---|---|---|
-| ⚠️ **Flapping alert** | 3+ status changes in 6h | AI reads the actual down/up timestamps + durations and judges normal-recovery vs genuine instability |
-| 🔮 **Pattern alert** | Recurring failure window detected (needs 14+ days) | Peak hour/day and interval consistency computed from real history; AI only validates, doesn't guess |
-| 🟡 **Early warning** | Response time rising *before* the outage | Only fires for a monitor with a **proven** history of RT-rise-then-outage (≥60% reliability from its own past events) |
-| 🔗 **Overlap detection** | 2+ monitors down in the same 15-min window | Real timestamp bucketing — AI is told explicitly not to claim shared-infra causes when no overlap exists |
-| 📊 **Daily digest** (08:00) | — | Bangla summary of the last 24h across all monitors |
-| 📅 **Weekly report** (Mon 09:00) | — | Week-over-week comparison, downtime-duration trend, correlation table, lead-time reliability table |
+### 1. 🧠 Self-Correcting AI Outage Forecasting
+* **Closed-Loop Learning:** Every 30 minutes, the engine scores past forecasts (`HIT` / `MISS` / `UNKNOWN`) and feeds the scorecard back into the LLM prompt alongside cleaned historical outage episodes.
+* **Bangladesh Workday Awareness (`Sun–Thu`):** Recognizes traffic-driven `.gov.bd` and enterprise patterns that occur on Sunday–Thursday working days and pause on Friday–Saturday weekends.
+* **Bimodal Peak & Midnight Wrap-Around Support:** Detects dual daily traffic peaks (e.g., `11:00, 15:30`) and cross-midnight maintenance clusters (`23h–00h`).
+* **Deterministic Back-Testing (Hard Veto):** Every AI-proposed rule is tested against the monitor's own observation history. Rules must achieve at least **3 historical hits** and **2.0x lift over random Poisson chance**. Overconfident AI probabilities are automatically capped at the empirical hit rate.
+* **Auto-Muting:** Monitors whose recent forecasts fall below a 40% hit rate are automatically muted until their accuracy recovers.
+
+### 2. ⚡ Hybrid "Watch + Live RT" Dynamic Promotion
+* Forecasts that pass the statistical lift test but have moderate historical probability (`30%–49%`) are placed in `watch` mode (silent by default).
+* If a `watch` window opens **and** live response time or latency jitter spikes simultaneously, the engine dynamically promotes the forecast into an active **Hybrid AI + Live RT Alert**.
+
+### 3. 📈 Multi-Signal Early Warning (Pre-Outage Detection)
+* Tracks every monitor's historical **Lead-Time Reliability** (what percentage of past outages were preceded by latency degradation in the 30 minutes prior).
+* Filters out `0.0ms` failed-scrape artifacts so pre-outage calculations are never poisoned.
+* Triggers early warnings on proven monitors using three live signals:
+  * **Absolute Latency Rise:** `>= 100ms` increase.
+  * **Relative Percentage Spike:** `>= 45%` increase above baseline (with a `35ms` noise floor) for fast APIs.
+  * **RT Jitter / Variance Spike:** Coefficient of Variation (`CV >= 0.55`) to catch connection pool exhaustion before averages climb.
+
+### 4. ⛓️ Live Directional Cascading Alerts (`Leader → Follower`)
+* Computes directional lag correlations across all monitors.
+* When an upstream **Leader** service goes down, if a downstream **Follower** historically drops within 10 minutes at least `60%` of the time, the engine immediately fires a **Cascading Outage Risk** heads-up while the follower is still `UP`.
+
+### 5. 🌐 Shared Infrastructure / BCC Network Detection
+* Automatically groups BCC-hosted portals (`Banglabiz`, `DFQT+`, `Mutation-Prod`, etc.) into time buckets.
+* If multiple BCC sites drop together across consecutive windows, individual monitor alerts are suppressed in favor of a single consolidated **BCC Network Issue** alert.
+
+### 6. 📊 Automated Bangla Daily Digests & Weekly Reports
+* **Daily Digest (08:00):** 24-hour health summary, verified simultaneous outage overlaps, and upcoming 24-hour forecast windows.
+* **Weekly SRE Report (Monday 09:00):** Week-over-week flap/downtime comparison, outage duration trends (`বাড়ছে` / `কমছে` / `স্থির`), directional correlations, lead-time reliability table, and AI forecast accuracy audit.
 
 ---
 
-## Stack
+## 🏗️ Architecture Flow
 
-```
-Uptime Kuma  →  Prometheus (180d retention)  →  Grafana (dashboards)
-                        │
-                        ▼
-              ai-predictor.py (cron, every 30 min)
-                        │
-              ┌─────────┴─────────┐
-              ▼                   ▼
-        Ollama (qwen2.5:14b)   Discord webhook
-```
+```text
+Prometheus (Uptime Kuma Metrics)
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ 1. Python Compute Layer (Deterministic)                  │
+│    • Deduplicates outage episodes & tracks first_seen    │
+│    • Computes flaps, relative RT %, jitter CV, duration  │
+│    • Checks BCC shared network & Leader->Follower risks  │
+└──────┬───────────────────────────────────────────┬───────┘
+       │                                           │
+       ▼ (Flapping Monitors)                       ▼ (Due Monitors)
+┌─────────────────────────────┐     ┌──────────────────────────────────┐
+│ 2. Batch AI Triage (Qwen3)  │     │ 3. AI Pattern Learner (Qwen3)    │
+│    • Single batched call    │     │    • Reads episodes, 2h clusters │
+│    • Compares against       │     │      & past HIT/MISS scorecard   │
+│      monitor's own baseline │     │    • Outputs symbolic rule       │
+└──────┬──────────────────────┘     └──────────────┬───────────────────┘
+       │                                           │
+       ▼                                           ▼
+┌─────────────────────────────┐     ┌──────────────────────────────────┐
+│ 4. Severity Hard Veto       │     │ 5. Poisson Back-Test & Capping   │
+│    • Downgrades unproven    │     │    • Per-monitor history span    │
+│      HIGH/CRITICAL claims   │     │    • Caps prob_pct at hit-rate   │
+└──────┬──────────────────────┘     └──────────────┬───────────────────┘
+       │                                           │
+       └───────────────────┬───────────────────────┘
+                           ▼
+                Discord Webhook Embeds
 
 - **Uptime Kuma** — service monitoring, exposes `/metrics`
 - **Prometheus** — long-term metrics storage
